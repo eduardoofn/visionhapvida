@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 import os
 
 # === CONFIGURAR CONEXAO COM SUPABASE (POSTGRESQL - POOLER) ===
-load_dotenv(dotenv_path="config.env")
+load_dotenv(dotenv_path=".env")
 
 SUPABASE_CONFIG = {
     "usuario": os.getenv("USUARIO"),
