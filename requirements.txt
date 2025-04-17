@@ -4,5 +4,4 @@ sqlalchemy
 psycopg2-binary
 python-dotenv
 PyMuPDF
-st-aggrid
-fitz
+streamlit-aggrid
