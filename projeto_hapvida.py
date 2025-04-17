@@ -41,6 +41,19 @@ def adicionar_dias_uteis(data_inicial, dias_uteis):
 
 
 # === ESTILO GLOBAL CUSTOMIZADO ===
+st.markdown("""
+    <style>
+    /* Remove a borda superior do conteúdo principal */
+    section.main > div:first-child {
+        border-top: none !important;
+    }
+
+    /* Remove qualquer sobra superior */
+    .block-container {
+        padding-top: 0rem !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 
 # === DESATIVAR AUTOCOMPLETE DE CAMPOS TEXT_INPUT ===
@@ -69,6 +82,13 @@ def extrair_dados_pdf(file):
     data_emissao = re.search(r"Data Emiss[ãa]o:\s*(\d{2}\.\d{2}\.\d{4})", texto)
     hospital = re.search(r"Dados de Faturamento\n(.*?)\n", texto)
     endereco = re.search(r"HAM - HOSPITAL ILHA DO LEITE\n(.*?)\nRECIFE", texto, re.DOTALL)
+    uf_linha = re.search(r"RECIFE\s*-\s*(\w{2})", texto)
+    cidade_linha = re.search(r"Endereço de Entrega.*?\n(.*?)\n(.*?)\n", texto, re.DOTALL)
+
+    # Captura cidade e UF
+    uf = uf_linha.group(1) if uf_linha else None
+    cidade = cidade_linha.group(2).split("-")[0].strip() if cidade_linha else None
+
 
     itens = re.findall(r"\d{5}\s+(\d{2}\.\d{2}\.\d{4})\s+(\d+)\s+(.*?)\s+(\d+,\d{3})\s+UD\s+(\d+,\d{3})", texto)
 
@@ -77,8 +97,8 @@ def extrair_dados_pdf(file):
         "data_emissao": datetime.datetime.strptime(data_emissao.group(1), "%d.%m.%Y") if data_emissao else None,
         "hospital": hospital.group(1).strip() if hospital else None,
         "endereco_entrega": endereco.group(1).replace("\n", " ").strip() if endereco else None,
-        "estado": "Pernambuco",
-        "uf": "PE"
+        "estado": cidade,
+        "uf": uf
     }
 
     lista_itens = []
@@ -191,20 +211,29 @@ elif menu == "📈 Acompanhamento":
             ORDER BY pr.id DESC
         """, con=engine)
 
+        opcoes_status_tecido = ["", "COMPRADO", "RECEBIDO", "CORTADO"]
+        opcoes_faturamento = ["", "EXPEDICAO", "FATURADO", "OK"]
+        opcoes_logistica = ["", "PALETE", "PAVÃO", "ENTREGUE"]
+
         gb = GridOptionsBuilder.from_dataframe(df)
-        gb.configure_pagination()
+        gb.configure_pagination(paginationAutoPageSize=True)
         gb.configure_default_column(filter=True, editable=True, groupable=True)
+
+        gb.configure_column("status_tecido", editable=True, cellEditor='agSelectCellEditor', cellEditorParams={"values": opcoes_status_tecido})
+        gb.configure_column("faturamento", editable=True, cellEditor='agSelectCellEditor', cellEditorParams={"values": opcoes_faturamento})
+        gb.configure_column("logistica", editable=True, cellEditor='agSelectCellEditor', cellEditorParams={"values": opcoes_logistica})
+
+
         grid_options = gb.build()
 
         grid_response = AgGrid(
             df,
             gridOptions=grid_options,
-            update_mode=GridUpdateMode.MODEL_CHANGED,
-            fit_columns_on_grid_load=True,
             theme="streamlit",
-            height=600,
+            update_mode=GridUpdateMode.VALUE_CHANGED,
             allow_unsafe_jscode=True,
-            editable=True
+            enable_enterprise_modules=True,
+            height=500
         )
 
         edited_df = grid_response["data"]
@@ -278,30 +307,41 @@ if menu == "🧾 Produção":
                 with st.spinner("Salvando dados..."):
                     data_faturamento = datetime.date.today() if faturamento == "OK" else None
 
+                    # Função para buscar o ID pelo nome
+                    def get_id_por_nome(tabela, nome):
+                        with engine.connect() as conn:
+                            result = conn.execute(
+                                text(f"SELECT id FROM {tabela} WHERE nome = :nome"),
+                                {"nome": nome}
+                            ).fetchone()
+                            return result[0] if result else None
+
+                    # Inserção na tabela de produção com os IDs corretos
                     with engine.begin() as conn:
                         conn.execute(
                             text("""
                                 INSERT INTO producao (
-                                    id_item_pedido, status_tecido, faturamento, data_faturamento, 
-                                    nota_fiscal, ordem_fabricacao, quantidade_op, consumo, tecido, logistica
+                                    id_item_pedido, status_tecido_id, faturamento_id, data_faturamento, 
+                                    nota_fiscal, ordem_fabricacao, quantidade_op, consumo, tecido, logistica_id
                                 ) VALUES (
-                                    :id_item_pedido, :status_tecido, :faturamento, :data_faturamento, 
-                                    :nota_fiscal, :ordem_fabricacao, :quantidade_op, :consumo, :tecido, :logistica
+                                    :id_item_pedido, :status_tecido_id, :faturamento_id, :data_faturamento, 
+                                    :nota_fiscal, :ordem_fabricacao, :quantidade_op, :consumo, :tecido, :logistica_id
                                 )
                             """),
                             {
                                 "id_item_pedido": int(id_item),
-                                "status_tecido": status_tecido,
-                                "faturamento": faturamento,
+                                "status_tecido_id": get_id_por_nome("status_tecido", status_tecido),
+                                "faturamento_id": get_id_por_nome("status_faturamento", faturamento),
                                 "data_faturamento": data_faturamento,
                                 "nota_fiscal": nota_fiscal,
                                 "ordem_fabricacao": ordem_fabricacao,
                                 "quantidade_op": int(quantidade_op),
                                 "consumo": float(consumo),
                                 "tecido": tecido,
-                                "logistica": logistica
+                                "logistica_id": get_id_por_nome("logistica", logistica)
                             }
                         )
+
 
                         
 
@@ -341,41 +381,69 @@ if menu == "🧾 Produção":
                                 })
                     except Exception as e:
                         st.error(f"Erro ao atualizar campos automáticos: {e}")
-                st.experimental_rerun()
+
+                for key in st.session_state.keys():
+                    del st.session_state[key]
+                st.rerun()
 
 
 # === TABELA LOGISTICA ===
 elif menu == "🚚 Logística":
     st.title("🚚 Cadastro de Logística")
 
-    # 🔄 Limpa o campo antes de exibir o input
-    if st.session_state.get("limpar_logistica", False):
-        st.session_state.nome_logistica = ""
-        st.session_state.limpar_logistica = False
+    with engine.connect() as conn:
+        df_logistica = pd.read_sql("SELECT id, nome FROM logistica ORDER BY id DESC", conn)
 
-    nome = st.text_input("Nome da logística", key="nome_logistica")
+    nome_novo = st.text_input("Nome da logística", key="nome_logistica")
 
-    if st.button("Adicionar"):
-        try:
-            with engine.connect() as conn:
-                ja_existe = pd.read_sql("SELECT 1 FROM logistica WHERE nome = %s", conn, params=(nome,))
-                if not ja_existe.empty:
-                    st.warning("🚨 Este nome de logística já está cadastrado.")
-                else:
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        if st.button("Adicionar"):
+            if nome_novo.strip() == "":
+                st.warning("Informe o nome da logística.")
+            else:
+                try:
                     with engine.begin() as conn:
-                        conn.execute(text("INSERT INTO logistica (nome) VALUES (:nome)"), {"nome": nome})
+                        conn.execute(
+                            text("INSERT INTO logistica (nome) VALUES (:nome)"),
+                            {"nome": nome_novo.strip().upper()}
+                        )
                     st.success("Logística adicionada com sucesso!")
-                    st.session_state.limpar_logistica = True
                     st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao salvar: {e}")
+                except Exception as e:
+                    st.error(f"Erro ao salvar: {e}")
 
-    # 🧾 Exibe tabela no final
-    try:
-        df_log = pd.read_sql("SELECT id, nome FROM logistica ORDER BY id DESC", con=engine)
-        st.dataframe(df_log, use_container_width=True)
-    except:
-        st.warning("Nenhum dado encontrado ou erro ao carregar.")
+    st.markdown("---")
+
+    # Tabela com opção de seleção
+    gb = GridOptionsBuilder.from_dataframe(df_logistica)
+    gb.configure_selection("single", use_checkbox=True)
+    gb.configure_columns(df_logistica.columns, editable=False)
+    grid_options = gb.build()
+
+    grid_response = AgGrid(
+        df_logistica,
+        gridOptions=grid_options,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        theme="streamlit",
+        height=300
+    )
+
+    selected_row = grid_response["selected_rows"]
+
+    if selected_row is not None and not selected_row.empty:
+        id_selecionado = selected_row.iloc[0]['id']
+        nome_selecionado = selected_row.iloc[0]['nome']
+        st.warning(f"Selecionado: {nome_selecionado}")
+
+        if st.button("❌ Excluir Selecionado"):
+            with engine.begin() as conn:
+                conn.execute(
+                    text("DELETE FROM logistica WHERE id = :id"),
+                    {"id": int(id_selecionado)}
+                )
+            st.success("Registro excluído com sucesso!")
+            st.rerun()
 
 
 # === TABELA DE PEDIDOS ===
